@@ -1,0 +1,747 @@
+<script setup lang="ts">
+import { Upload, CircleClose, Promotion, Picture, Check, Close, Box } from '@element-plus/icons-vue'
+import { marked } from 'marked'
+import type { CadModel } from '../../shared/types/cad'
+
+definePageMeta({
+  middleware: 'auth',
+  layout: false,
+})
+
+const { data: authData, signOut } = useAuth()
+const router = useRouter()
+
+// nuxt-auth 的 SessionData 类型未声明 user 字段，这里宽松取值
+const authUser = computed<any>(() => (authData.value as any)?.user)
+
+interface ChatMessage {
+  id: string
+  type: 'user' | 'ai' | 'error'
+  content?: string
+  image?: string // data URL 预览
+  status?: 'RUNNING' | 'COMPLETED' | 'FAILED'
+  title?: string
+  summary?: string
+  model?: CadModel
+  error?: string
+  timestamp: Date
+}
+
+const messages = ref<ChatMessage[]>([])
+const chatScroll = ref<HTMLDivElement | null>(null)
+watch(messages, () => {
+  if (chatScroll.value) chatScroll.value.scrollTop = chatScroll.value.scrollHeight
+}, { deep: true, flush: 'post' })
+const input = ref('')
+const uploadedFile = ref<File | null>(null)
+const previewUrl = ref<string>('')
+const isGenerating = ref(false)
+const currentModel = ref<CadModel | null>(null)
+const editMode = ref<'generate' | 'material'>('generate')
+const materialExamples = [
+  { label: '胡桃木', text: '整体改为胡桃木，保留自然木纹和哑光质感' },
+  { label: '拉丝金属', text: '整体改为银色拉丝不锈钢，呈现金属反射与细腻拉丝纹理' },
+  { label: '透明玻璃', text: '整体改为透明玻璃，带轻微浅绿色边缘和通透质感' },
+]
+const currentTitle = ref('')
+const currentSummary = ref('')
+
+async function handleLogout() {
+  await signOut()
+  router.push('/login')
+}
+
+// File -> { raw base64, mediaType }
+function fileToBase64(file: File): Promise<{ raw: string; mediaType: string; dataUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      const parts = dataUrl.split(',')
+      const meta = parts[0] || ''
+      const raw = parts[1] || ''
+      const mediaType = meta.replace('data:', '').replace(';base64', '') || 'image/jpeg'
+      resolve({ raw, mediaType, dataUrl })
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+// 图片上传限制：与 server/api/cad/generate.post.ts 的 mediaType 枚举和 base64 上限一致。
+const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024
+
+function handleFileUpload(event: Event) {
+  const el = event.target as HTMLInputElement
+  const file = el.files?.[0]
+  if (!file) return
+  el.value = ''
+  // 提前拦截，否则要上传完整个文件才会被服务端 400 拒绝。
+  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    ElMessage.error('仅支持 JPG / PNG / WebP / GIF 图片')
+    return
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    ElMessage.error('图片不能超过 15MB')
+    return
+  }
+  uploadedFile.value = file
+  previewUrl.value = URL.createObjectURL(file)
+}
+
+function removeFile() {
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  uploadedFile.value = null
+  previewUrl.value = ''
+}
+
+function renderMarkdown(text?: string) {
+  if (!text) return ''
+  return marked(text, { breaks: true, gfm: true })
+}
+
+function onViewerError(msg: string) {
+  ElMessage({ type: 'error', message: msg, duration: 10_000, showClose: true })
+}
+
+async function sendMessage() {
+  const text = input.value.trim()
+  if (!text && !uploadedFile.value) {
+    ElMessage.warning('请输入描述或上传图片')
+    return
+  }
+  if (isGenerating.value) return
+  const sentMode = editMode.value
+  if (sentMode === 'material' && !currentModel.value) {
+    ElMessage.warning('请先生成模型，再调整材质')
+    return
+  }
+
+  isGenerating.value = true
+
+  // 用户消息
+  let imageDataUrl = ''
+  let imageRaw = ''
+  let mediaType = 'image/jpeg'
+  if (uploadedFile.value) {
+    try {
+      const b = await fileToBase64(uploadedFile.value)
+      imageDataUrl = b.dataUrl
+      imageRaw = b.raw
+      mediaType = b.mediaType
+    } catch {
+      isGenerating.value = false
+      ElMessage.error('图片读取失败，请重新上传')
+      return
+    }
+  }
+
+  messages.value.push({
+    id: Date.now() + '_u',
+    type: 'user',
+    content: text || '（仅图片）根据图片生成 3D 模型',
+    image: imageDataUrl || previewUrl.value || undefined,
+    timestamp: new Date(),
+  })
+
+  const aiMsg: ChatMessage = {
+    id: Date.now() + '_ai',
+    type: 'ai',
+    status: 'RUNNING',
+    content: sentMode === 'material' ? '正在解析材质并调整外观，保留模型几何…' : '正在生成几何与材质方案…',
+    timestamp: new Date(),
+  }
+  messages.value.push(aiMsg)
+
+  // 清空输入
+  const sentText = text
+  input.value = ''
+  removeFile()
+
+  try {
+    const res = await $fetch<{ success: boolean; model: CadModel; title: string; summary: string }>(
+      '/api/cad/generate',
+      {
+        method: 'POST',
+        body: {
+          text: sentText,
+          mode: sentMode,
+          currentModel: sentMode === 'material' ? currentModel.value : undefined,
+          imageBase64: imageRaw || undefined,
+          mediaType: imageRaw ? mediaType : undefined,
+        },
+      },
+    )
+
+    const idx = messages.value.findIndex((m) => m.id === aiMsg.id)
+    const done: ChatMessage = {
+      ...aiMsg,
+      status: 'COMPLETED',
+      content: res.summary || '模型生成完成，已在右侧预览。',
+      title: res.title,
+      summary: res.summary,
+      model: res.model,
+    }
+    if (idx !== -1) messages.value[idx] = done
+
+    currentModel.value = res.model
+    currentTitle.value = res.title
+    currentSummary.value = res.summary
+    editMode.value = 'material'
+  } catch (e: any) {
+    const msg = e?.data?.message || e?.message || '生成失败，请重试'
+    const idx = messages.value.findIndex((m) => m.id === aiMsg.id)
+    if (idx !== -1) {
+      messages.value[idx] = { ...aiMsg, status: 'FAILED', error: msg, content: '' }
+    } else {
+      messages.value.push({ id: Date.now() + '_e', type: 'error', content: msg, timestamp: new Date() })
+    }
+  } finally {
+    isGenerating.value = false
+  }
+}
+
+function clearChat() {
+  if (isGenerating.value) return
+  editMode.value = 'generate'
+  messages.value = []
+  currentModel.value = null
+  currentTitle.value = ''
+  currentSummary.value = ''
+}
+</script>
+
+<template>
+  <div class="cad-page">
+    <el-header class="cad-header">
+      <div class="header-left">
+        <NuxtLink to="/cad" class="logo">Create 3D Things · 文字建模</NuxtLink>
+      </div>
+      <div class="header-right">
+        <span class="user-name">{{ authUser?.name || authUser?.email }}</span>
+        <el-button type="danger" plain size="small" @click="handleLogout">退出登录</el-button>
+      </div>
+    </el-header>
+
+    <div class="cad-body">
+      <!-- 左侧：聊天 -->
+      <section class="chat-panel">
+        <div ref="chatScroll" class="chat-scroll">
+          <div v-if="messages.length === 0" class="welcome">
+            <el-icon class="welcome-icon"><Box /></el-icon>
+            <h2>文字 / 图片 → 材质 3D 模型</h2>
+            <p>同时描述形状、尺寸与材质，例如：</p>
+            <ul class="examples">
+              <li>一块 60×40×8 的拉丝铝板，四角各钻一个 φ6 通孔</li>
+              <li>胡桃木桌面配银色金属桌腿，木纹沿桌面长边延伸</li>
+              <li>黄铜底座托着一个浅绿色透明玻璃球</li>
+            </ul>
+            <p class="tip">也可上传参考图。生成后可继续用自然语言修改整体或局部材质，保持模型尺寸不变。</p>
+          </div>
+
+          <div v-else class="msg-list">
+            <div v-for="m in messages" :key="m.id" :class="['msg', m.type]">
+              <!-- 用户 -->
+              <div v-if="m.type === 'user'" class="bubble user-bubble">
+                <img v-if="m.image" :src="m.image" class="msg-image" />
+                <p v-if="m.content">{{ m.content }}</p>
+              </div>
+
+              <!-- AI -->
+              <div v-else-if="m.type === 'ai'" class="ai-row">
+                <div class="ai-avatar">AI</div>
+                <div class="bubble ai-bubble">
+                  <template v-if="m.status === 'RUNNING'">
+                    <el-icon class="is-loading"><Promotion /></el-icon>
+                    <span class="loading-text">{{ m.content }}</span>
+                  </template>
+                  <template v-else-if="m.status === 'COMPLETED'">
+                    <div class="done-head">
+                      <el-icon color="#67c23a"><Check /></el-icon>
+                      <strong>{{ m.title || '模型已生成' }}</strong>
+                    </div>
+                    <div v-if="m.summary" class="summary" v-html="renderMarkdown(m.summary)"></div>
+                    <div class="hint">👉 已在右侧渲染，可拖拽旋转、滚轮缩放</div>
+                  </template>
+                  <template v-else>
+                    <el-icon color="#f56c6c"><Close /></el-icon>
+                    <span class="err-text">{{ m.error }}</span>
+                  </template>
+                </div>
+              </div>
+
+              <!-- 错误 -->
+              <div v-else class="bubble err-bubble">{{ m.content }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="input-area">
+          <div class="mode-row">
+            <el-radio-group v-model="editMode" size="small" :disabled="isGenerating">
+              <el-radio-button value="generate">生成新模型</el-radio-button>
+              <el-radio-button value="material" :disabled="!currentModel">仅改材质</el-radio-button>
+            </el-radio-group>
+            <span v-if="editMode === 'material'" class="mode-tip">保留几何与尺寸</span>
+          </div>
+          <div v-if="editMode === 'material'" class="material-examples">
+            <el-button
+              v-for="example in materialExamples"
+              :key="example.label"
+              size="small"
+              round
+              :disabled="isGenerating"
+              @click="input = example.text"
+            >{{ example.label }}</el-button>
+          </div>
+          <div v-if="previewUrl" class="preview-row">
+            <div class="preview-item">
+              <img :src="previewUrl" />
+              <el-icon class="remove" @click="removeFile"><CircleClose /></el-icon>
+            </div>
+          </div>
+          <div class="input-box">
+            <el-input
+              v-model="input"
+              type="textarea"
+              :rows="2"
+              resize="none"
+              :placeholder="editMode === 'material' ? '例如：桌面改成胡桃木，支架改成拉丝金属…' : '描述模型的形状与材质（500 字以内），例如木质底座托着透明玻璃球…'"
+              @keydown.enter.exact.prevent="sendMessage"
+            />
+            <div class="input-actions">
+              <label class="upload-btn" title="上传参考图">
+                <el-icon><Upload /></el-icon>
+                <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="file-input" @change="handleFileUpload" />
+              </label>
+              <div class="right-actions">
+                <el-button v-if="messages.length" text size="small" :disabled="isGenerating" @click="clearChat">清空</el-button>
+                <el-button
+                  type="success"
+                  class="send-btn"
+                  :loading="isGenerating"
+                  :disabled="isGenerating || (!input.trim() && !uploadedFile)"
+                  @click="sendMessage"
+                >
+                  <el-icon v-if="!isGenerating"><Promotion /></el-icon>
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右侧：3D 预览 -->
+      <section class="preview-panel">
+        <div class="preview-head">
+          <span class="preview-title">
+            <el-icon><Box /></el-icon>
+            {{ currentTitle || '3D 预览' }}
+          </span>
+          <el-tag v-if="currentModel" type="success" size="small" effect="dark">已渲染</el-tag>
+          <el-tag v-else type="info" size="small">等待生成</el-tag>
+        </div>
+        <div class="preview-canvas">
+          <CadViewer3D
+            :model="currentModel"
+            @error="onViewerError"
+          />
+          <div v-if="!currentModel" class="canvas-placeholder">
+            <el-icon><Picture /></el-icon>
+            <p>生成的模型会显示在这里</p>
+          </div>
+        </div>
+        <div v-if="currentSummary" class="preview-foot">{{ currentSummary }}</div>
+      </section>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.cad-page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--lxp-bg-deep);
+  overflow: hidden;
+}
+
+.cad-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+  padding: 0 20px;
+  background: var(--lxp-glass);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border-bottom: 1px solid var(--lxp-glass-border);
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--lxp-primary);
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
+  text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+  text-decoration: none;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-name {
+  color: var(--lxp-text-secondary);
+  font-size: 14px;
+}
+
+.cad-body {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  min-height: 0;
+}
+
+/* 左侧聊天 */
+.chat-panel {
+  width: 420px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--lxp-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 12px;
+  border: 1px solid var(--lxp-glass-border);
+  box-shadow: var(--lxp-glow);
+  overflow: hidden;
+}
+
+.chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.welcome {
+  color: var(--lxp-text-secondary);
+  padding: 20px 8px;
+}
+
+.welcome-icon {
+  font-size: 56px;
+  color: var(--lxp-primary);
+}
+
+.welcome h2 {
+  font-size: 20px;
+  color: var(--lxp-primary);
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
+  margin: 12px 0;
+}
+
+.welcome .examples {
+  margin: 8px 0 12px;
+  padding-left: 20px;
+  color: var(--lxp-text-secondary);
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.welcome .tip {
+  font-size: 13px;
+  color: var(--lxp-text-muted);
+}
+
+.msg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.msg.user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.bubble {
+  max-width: 85%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.user-bubble {
+  background: linear-gradient(135deg, #00e5ff 0%, #0091ea 100%);
+  color: #04121a;
+  border-radius: 14px 14px 4px 14px;
+}
+
+.user-bubble p {
+  margin: 0;
+}
+
+.msg-image {
+  display: block;
+  max-width: 160px;
+  max-height: 160px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.ai-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.ai-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7c3aed 0%, #00e5ff 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ai-bubble {
+  background: var(--lxp-bg-elevated);
+  border: 1px solid var(--lxp-glass-border);
+  border-radius: 4px 14px 14px 14px;
+  flex: 1;
+}
+
+.loading-text {
+  margin-left: 8px;
+  color: var(--lxp-text-secondary);
+}
+
+.done-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.summary {
+  color: var(--lxp-text-secondary);
+  font-size: 13px;
+}
+
+.summary :deep(p) {
+  margin: 4px 0;
+}
+
+.hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--lxp-accent);
+}
+
+.err-text,
+.err-bubble {
+  color: var(--lxp-danger);
+}
+
+.err-bubble {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* 输入区 */
+.input-area {
+  border-top: 1px solid var(--lxp-border);
+  padding: 12px;
+  flex-shrink: 0;
+}
+
+.mode-row,
+.material-examples {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mode-tip {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.material-examples .el-button + .el-button {
+  margin-left: 0;
+}
+
+.preview-row {
+  margin-bottom: 10px;
+}
+
+.preview-item {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+
+.preview-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--lxp-glass-border);
+}
+
+.preview-item .remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.input-box {
+  border: 1px solid var(--lxp-glass-border);
+  background: var(--lxp-bg-surface);
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.input-box :deep(.el-textarea__inner) {
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  font-size: 14px;
+}
+
+.input-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--lxp-border);
+}
+
+.upload-btn {
+  cursor: pointer;
+  color: var(--lxp-text-muted);
+  font-size: 20px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.upload-btn:hover {
+  background: var(--lxp-primary-dim);
+  color: var(--lxp-primary);
+}
+
+.file-input {
+  display: none;
+}
+
+.right-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.send-btn {
+  width: 38px;
+  height: 38px;
+  background: linear-gradient(135deg, #00e5ff 0%, #0091ea 100%);
+  border: none;
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.3);
+}
+
+.send-btn:disabled {
+  background: var(--lxp-bg-elevated);
+}
+
+/* 右侧预览 */
+.preview-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--lxp-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 12px;
+  border: 1px solid var(--lxp-glass-border);
+  box-shadow: var(--lxp-glow);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--lxp-border);
+}
+
+.preview-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--lxp-text-primary);
+  flex: 1;
+}
+
+.preview-canvas {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  background: #0f172a;
+}
+
+.canvas-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #64748b;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.canvas-placeholder .el-icon {
+  font-size: 48px;
+}
+
+.preview-foot {
+  padding: 10px 18px;
+  font-size: 12px;
+  color: var(--lxp-text-muted);
+  border-top: 1px solid var(--lxp-border);
+  flex-shrink: 0;
+}
+</style>

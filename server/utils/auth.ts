@@ -1,0 +1,52 @@
+import jwt from 'jsonwebtoken'
+import bcryptjs from 'bcryptjs'
+
+const SECRET = process.env.AUTH_SECRET
+if (!SECRET) {
+  throw new Error('AUTH_SECRET 环境变量未设置，请在 .env 中配置')
+}
+
+export interface AuthPayload {
+  userId: string
+  email: string
+}
+
+export function hashPassword(password: string): Promise<string> {
+  return bcryptjs.hash(password, 12)
+}
+
+export function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcryptjs.compare(password, hash)
+}
+
+export function generateToken(payload: AuthPayload): string {
+  return jwt.sign(payload, SECRET, { expiresIn: '24h' })
+}
+
+function verifyToken(token: string): AuthPayload | null {
+  try {
+    return jwt.verify(token, SECRET) as AuthPayload
+  }
+  catch {
+    return null
+  }
+}
+
+function getTokenFromHeader(event: any): string | null {
+  const authHeader = getRequestHeader(event, 'authorization')
+  if (!authHeader?.startsWith('Bearer ')) return null
+  return authHeader.slice(7)
+}
+
+function getTokenFromCookie(event: any): string | null {
+  const cookies = parseCookies(event)
+  // @sidebase/nuxt-auth default cookie names
+  return cookies['auth.token'] || cookies['auth:token'] || cookies['nuxt-auth-token'] || cookies['nuxt-auth:session'] || null
+}
+
+/** 解析请求身份；无效或缺失返回 null，由调用方决定返回 401。 */
+export function getUserFromToken(event: any): AuthPayload | null {
+  const token = getTokenFromHeader(event) || getTokenFromCookie(event)
+  if (!token) return null
+  return verifyToken(token)
+}

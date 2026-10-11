@@ -1,0 +1,295 @@
+/* ==========================================================================
+   Create 3D Things · 空间科技先锋风 (Spatial Tech Pioneer)
+   设计令牌 + Element Plus 暗色覆盖
+
+   设计方向：Spatial UI (VisionOS) 磨砂玻璃深度感 + HUD / Sci-Fi FUI 霓虹线条
+   层级：背景 (#080b14 → #0d1117 → #161b22) / 玻璃面板 / 霓虹青主色 / 技术细线
+
+   组件覆盖仅包含本项目实际使用的 Element Plus 组件：
+   container / card / form / input / textarea / button / tag / radio / icon / result
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+/* ==========================================================================
+   1. 设计令牌
+   ========================================================================== */
+
+:root {
+  /* ---- 背景层 ---- */
+  --lxp-bg-deep: #080b14;
+  --lxp-bg-surface: #0d1117;
+  --lxp-bg-elevated: #161b22;
+
+  /* ---- 磨砂玻璃 ---- */
+  --lxp-glass: rgba(13, 17, 23, 0.72);
+  --lxp-glass-border: rgba(0, 229, 255, 0.12);
+
+  /* ---- 霓虹色板 ---- */
+  --lxp-primary: #00e5ff;
+  --lxp-primary-dim: rgba(0, 229, 255, 0.15);
+  --lxp-secondary: #7c3aed;
+  --lxp-accent: #06ffa5;
+  --lxp-warning: #f59e0b;
+  --lxp-danger: #ef4444;
+
+  /* ---- 文字 ---- */
+  --lxp-text-primary: #f0f6fc;
+  --lxp-text-secondary: #8b949e;
+  --lxp-text-muted: #484f58;
+
+  /* ---- 描边（技术细线）---- */
+  --lxp-border: rgba(0, 229, 255, 0.08);
+
+  /* ---- 发光 ---- */
+  --lxp-glow: 0 0 20px rgba(0, 229, 255, 0.15);
+  --lxp-glow-strong: 0 0 30px rgba(0, 229, 255, 0.3);
+
+  /* ---- 圆角 ---- */
+  --lxp-radius-sm: 6px;
+  --lxp-radius-md: 12px;
+  --lxp-radius-lg: 20px;
+  --lxp-radius-xl: 28px;
+
+  /* ---- 字体 ---- */
+  --lxp-font-display: 'Space Grotesk', 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --lxp-font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ==========================================================================
+   2. Element Plus 暗色变量覆盖
+   primary 梯度按 EP 的 mix-with-white (light-N) / mix-with-black (dark-2) 规则推导
+   ========================================================================== */
+
+html:root {
+  color-scheme: dark;
+
+  /* ---- 主色：霓虹青 #00e5ff ---- */
+  --el-color-primary: #00e5ff;
+  /* 暗色主题下 light-N 作为背景/悬停，须为深色半透明 tint（EP dark 约定） */
+  --el-color-primary-light-3: rgba(0, 229, 255, 0.35);
+  --el-color-primary-light-5: rgba(0, 229, 255, 0.25);
+  --el-color-primary-light-7: rgba(0, 229, 255, 0.18);
+  --el-color-primary-light-8: rgba(0, 229, 255, 0.14);
+  --el-color-primary-light-9: rgba(0, 229, 255, 0.10);
+  --el-color-primary-dark-2: #00b7cc;
+
+  /* ---- 语义色 ---- */
+  --el-color-success: #06ffa5;
+  --el-color-success-light-3: rgba(6, 255, 165, 0.35);
+  --el-color-success-light-5: rgba(6, 255, 165, 0.25);
+  --el-color-success-light-9: rgba(6, 255, 165, 0.12);
+  --el-color-success-dark-2: #05cc84;
+
+  --el-color-warning: #f59e0b;
+  --el-color-warning-light-3: rgba(245, 158, 11, 0.35);
+  --el-color-warning-light-5: rgba(245, 158, 11, 0.25);
+  --el-color-warning-light-9: rgba(245, 158, 11, 0.12);
+  --el-color-warning-dark-2: #c47e09;
+
+  --el-color-danger: #ef4444;
+  --el-color-danger-light-3: rgba(239, 68, 68, 0.35);
+  --el-color-danger-light-5: rgba(239, 68, 68, 0.25);
+  --el-color-danger-light-9: rgba(239, 68, 68, 0.12);
+  --el-color-danger-dark-2: #bf3636;
+
+  --el-color-error: var(--el-color-danger);
+  --el-color-info: var(--lxp-text-secondary);
+  --el-color-info-light-3: rgba(139, 148, 158, 0.35);
+  --el-color-info-light-5: rgba(139, 148, 158, 0.25);
+  --el-color-info-light-9: rgba(139, 148, 158, 0.12);
+
+  /* ---- 背景 ---- */
+  --el-bg-color: #0d1117;
+  --el-bg-color-overlay: #161b22;
+  --el-bg-color-page: #080b14;
+
+  /* ---- 文字 ---- */
+  --el-text-color-primary: #f0f6fc;
+  --el-text-color-regular: #c9d1d9;
+  --el-text-color-secondary: #8b949e;
+  --el-text-color-placeholder: #484f58;
+
+  /* ---- 描边 ---- */
+  --el-border-color: rgba(0, 229, 255, 0.12);
+  --el-border-color-light: rgba(0, 229, 255, 0.08);
+  --el-border-color-lighter: rgba(0, 229, 255, 0.05);
+  --el-border-color-extra-light: rgba(0, 229, 255, 0.03);
+
+  /* ---- 填充 ---- */
+  --el-fill-color-blank: #0d1117;
+  --el-fill-color-light: #161b22;
+  --el-fill-color-lighter: #1c2128;
+  --el-fill-color: #21262d;
+
+  /* ---- 遮罩 ---- */
+  --el-mask-color: rgba(8, 11, 20, 0.8);
+
+  /* ---- 禁用态 ---- */
+  --el-disabled-bg-color: var(--lxp-bg-surface);
+  --el-disabled-text-color: var(--lxp-text-muted);
+  --el-disabled-border-color: var(--lxp-border);
+}
+
+/* ==========================================================================
+   3. 基础排版
+   ========================================================================== */
+
+html,
+body {
+  background: var(--lxp-bg-deep);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--lxp-text-primary);
+  font-family: var(--lxp-font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--lxp-primary-dim);
+  color: var(--lxp-text-primary);
+}
+
+/* ==========================================================================
+   4. Element Plus 组件覆盖
+   ========================================================================== */
+
+/* ---- 4.1 卡片：磨砂玻璃 ---- */
+body .el-card {
+  background: var(--lxp-glass);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid var(--lxp-glass-border);
+  border-radius: var(--lxp-radius-lg);
+  box-shadow: var(--lxp-glow);
+  color: var(--lxp-text-primary);
+}
+
+body .el-card__header {
+  border-bottom: 1px solid var(--lxp-border);
+}
+
+body .el-overlay {
+  background-color: var(--el-mask-color);
+}
+
+/* ---- 4.2 输入框 ---- */
+body .el-input__wrapper,
+body .el-textarea__inner {
+  background: var(--lxp-bg-surface);
+  border: 1px solid var(--lxp-border);
+  border-radius: var(--lxp-radius-md);
+  box-shadow: none;
+  color: var(--lxp-text-primary);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+body .el-input__wrapper:hover,
+body .el-textarea__inner:hover {
+  border-color: rgba(0, 229, 255, 0.24);
+}
+
+body .el-input__wrapper.is-focus,
+body .el-textarea__inner:focus {
+  border-color: var(--lxp-primary);
+  box-shadow: 0 0 0 1px var(--lxp-primary) inset, 0 0 16px rgba(0, 229, 255, 0.15);
+}
+
+body .el-input__inner,
+body .el-textarea__inner {
+  color: var(--lxp-text-primary);
+}
+
+body .el-input__inner::placeholder,
+body .el-textarea__inner::placeholder {
+  color: var(--lxp-text-muted);
+}
+
+/* ---- 4.3 主按钮：霓虹渐变 ---- */
+body .el-button--primary {
+  background: linear-gradient(135deg, #00e5ff, #0091ea);
+  border: none;
+  color: #04121a;
+  box-shadow: var(--lxp-glow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+body .el-button--primary:hover,
+body .el-button--primary:focus {
+  background: linear-gradient(135deg, #4dedff, #00b7cc);
+  color: #04121a;
+  box-shadow: var(--lxp-glow-strong);
+  transform: translateY(-1px);
+}
+
+body .el-button--primary.is-plain {
+  background: var(--lxp-primary-dim);
+  border: 1px solid var(--lxp-glass-border);
+  color: var(--lxp-primary);
+  box-shadow: none;
+}
+
+/* ---- 4.4 标签 ---- */
+body .el-tag {
+  border-radius: var(--lxp-radius-sm);
+  font-family: var(--lxp-font-display);
+}
+
+body .el-tag--primary {
+  background: var(--lxp-primary-dim);
+  border-color: var(--lxp-glass-border);
+  color: var(--lxp-primary);
+}
+
+/* ==========================================================================
+   5. 滚动条：暗色轨道 + 青色滑块
+   ========================================================================== */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 229, 255, 0.28) var(--lxp-bg-surface);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--lxp-bg-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 229, 255, 0.22);
+  border: 2px solid var(--lxp-bg-surface);
+  border-radius: var(--lxp-radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 229, 255, 0.42);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--lxp-bg-surface);
+}
+
+/* ==========================================================================
+   6. 无障碍：降低动效
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
